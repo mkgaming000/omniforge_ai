@@ -1,5 +1,6 @@
 import java.util.Properties
 import java.io.FileInputStream
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
@@ -62,8 +63,11 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    // `kotlinOptions { jvmTarget = "..." }` is deprecated in AGP 8.3+ and
+    // removed in Kotlin 2.2.x. Migrated to the new `compilerOptions` DSL
+    // which uses the type-safe JvmTarget enum.
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 
     defaultConfig {

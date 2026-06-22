@@ -23,20 +23,30 @@ subprojects {
 // Several Flutter plugins (notably sentry_flutter 8.x) still declare
 // languageVersion = "1.6" in their own build.gradle, causing:
 //   e: Language version 1.6 is no longer supported; please, use version 1.8+
-// We can't edit those third-party build files, but we CAN force every
-// KotlinCompile task project-wide to use at least 1.9 if it tries to
-// target a version Kotlin 2.x no longer accepts. Plugins that already
-// target ≥1.8 are left untouched.
+//
+// Kotlin 2.2.x also removed the old `kotlinOptions` accessor entirely (it is
+// now a hard error, not a warning). The replacement is `compilerOptions`,
+// which uses Property<KotlinVersion> (an enum) instead of plain strings.
+//
+// This block reads each KotlinCompile task's languageVersion / apiVersion via
+// the new compilerOptions DSL and bumps any value below 1.8 up to 1.9.
+// Tasks already targeting ≥1.8 are left untouched.
 subprojects {
     afterEvaluate {
         tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-            val lv = kotlinOptions.languageVersion
-            if (lv != null && lv < "1.8") {
-                kotlinOptions.languageVersion = "1.9"
-            }
-            val av = kotlinOptions.apiVersion
-            if (av != null && av < "1.8") {
-                kotlinOptions.apiVersion = "1.9"
+            compilerOptions {
+                val minOrd = org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_1_8.ordinal
+                val target  = org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_1_9
+
+                val lv = languageVersion.orNull
+                if (lv != null && lv.ordinal < minOrd) {
+                    languageVersion.set(target)
+                }
+
+                val av = apiVersion.orNull
+                if (av != null && av.ordinal < minOrd) {
+                    apiVersion.set(target)
+                }
             }
         }
     }
