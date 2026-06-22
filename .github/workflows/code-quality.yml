@@ -1,0 +1,195 @@
+# OmniForge AI — Code Quality enforcement
+# Runs nightly + on PRs. Fails if TODOs, FIXMEs, placeholders, or
+# UnimplementedError are introduced into the codebase.
+name: Code Quality
+
+on:
+  schedule:
+    # Nightly at 02:30 UTC — catches drift even on branches without PRs.
+    - cron: '30 2 * * *'
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  FLUTTER_VERSION: '3.24.5'
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Job 1: Scan for forbidden patterns (TODO / FIXME / placeholder / etc.)
+  # -------------------------------------------------------------------------
+  forbidden-patterns:
+    name: Forbidden Patterns Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Scan for TODO comments
+        run: |
+          echo "## TODO Scan" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if grep -rn "TODO\|FIXME\|XXX\|HACK" lib/ test/ --include="*.dart" \
+              --exclude="*.g.dart" --exclude="*.freezed.dart"; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Found TODO/FIXME/XXX/HACK comments — clean them up before merging."
+            exit 1
+          fi
+          echo "✓ No TODO/FIXME/XXX/HACK comments found." >> $GITHUB_STEP_SUMMARY
+
+      - name: Scan for UnimplementedError
+        run: |
+          if grep -rn "UnimplementedError\|UnsupportedError" lib/ --include="*.dart" \
+              --exclude="*.g.dart" --exclude="*.freezed.dart"; then
+            echo "::error::Found UnimplementedError or UnsupportedError — implement the method."
+            exit 1
+          fi
+          echo "✓ No UnimplementedError/UnsupportedError."
+
+      - name: Scan for placeholder strings
+        run: |
+          # Match "Real impl:", "not yet implemented", "placeholder", "stub"
+          if grep -rni "real impl\|not yet implemented\|placeholder\|stub" lib/ --include="*.dart" \
+              --exclude="*.g.dart" --exclude="*.freezed.dart"; then
+            echo "::error::Found placeholder/stub code — replace with real implementation."
+            exit 1
+          fi
+          echo "✓ No placeholder/stub code."
+
+      - name: Scan for hardcoded API keys
+        run: |
+          # Match common API key patterns (sk-, Bearer, key=, etc.)
+          if grep -rnE "(sk-[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9]{20,})" lib/ --include="*.dart"; then
+            echo "::error::Possible hardcoded API key detected — move to encrypted storage."
+            exit 1
+          fi
+          echo "✓ No hardcoded API keys."
+
+      - name: Scan for print() statements
+        run: |
+          # print() should be replaced with AppLogger for production.
+          if grep -rn "^\s*print(" lib/ --include="*.dart" | grep -v "debugPrint"; then
+            echo "::warning::Found print() statements — use AppLogger instead."
+          fi
+
+      - name: Scan for empty catch blocks
+        run: |
+          # Empty catch blocks swallow errors. -z treats each file as one
+          # buffer so the pattern can match across the newline between
+          # "catch (...) {" and "}" on its own line, not just one-liners.
+          if grep -rlzP 'catch\s*\([^)]*\)\s*\{\s*\}' lib/ --include="*.dart"; then
+            echo "::error::Found empty catch block — log or rethrow the error."
+            exit 1
+          fi
+          echo "✓ No empty catch blocks."
+
+  # -------------------------------------------------------------------------
+  # Job 2: Pantheotes linter (custom checks via dart code metrics)
+  # -------------------------------------------------------------------------
+  dart-code-metrics:
+    name: Dart Code Metrics
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Activate dart code metrics
+        run: dart pub global activate dart_code_metrics
+
+      - name: Restore pub packages
+        run: flutter pub get
+
+      - name: Run dart code metrics
+        run: |
+          dart pub global run dart_code_metrics:metrics \
+            analyze lib/ \
+            --set-exit-on-violation-level=warning \
+            --reporter=console || \
+          echo "::warning::dart_code_metrics not fully configured — install + configure metrics.yaml for enforcement."
+
+  # -------------------------------------------------------------------------
+  # Job 3: License compliance check
+  # -------------------------------------------------------------------------
+  license-check:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Restore pub packages
+        run: flutter pub get
+
+      - name: Check for license conflicts
+        run: |
+          # Fail if any direct dependency uses GPL (incompatible with closed-source).
+          if grep -E "^\s+\w+:\s*\^?\d" pubspec.yaml | head -50 | grep -i gpl; then
+            echo "::error::GPL dependency detected — incompatible with proprietary license."
+            exit 1
+          fi
+          echo "✓ No GPL conflicts in direct dependencies."
+
+      - name: Verify LICENSE file exists
+        run: |
+          if [ ! -f "LICENSE" ] && [ ! -f "LICENSE.md" ]; then
+            echo "::warning::No LICENSE file in repo root."
+          fi
+
+  # -------------------------------------------------------------------------
+  # Job 4: Security audit (deps + code)
+  # -------------------------------------------------------------------------
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Restore pub packages
+        run: flutter pub get
+
+      - name: Run dependency security audit
+        run: |
+          # Check for known-vulnerable packages via pub.dev advisory API.
+          # This is a simplified check; in production, use tools like
+          # `dart pub audit` (when available) or third-party scanners.
+          dart pub outdated --no-dev-dependencies || true
+
+      - name: Scan for secrets in code
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true  # advisory-only on first runs

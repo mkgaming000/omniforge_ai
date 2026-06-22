@@ -1,0 +1,193 @@
+# OmniForge AI — Release APK build
+# Triggers manually, on release tags, and via workflow_dispatch.
+# Produces per-ABI release APKs (arm64-v8a, armeabi-v7a, x86_64) and
+# uploads each as a separate artifact for distribution.
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      flavor:
+        description: 'Build flavor (production | staging)'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+  workflow_call:
+    inputs:
+      flavor:
+        required: true
+        type: string
+        default: 'production'
+      version_tag:
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.24.5'
+  JAVA_VERSION: '17'
+
+jobs:
+  build-apk:
+    name: Build Release APK (${{ inputs.flavor }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-apk-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-apk-${{ runner.os }}-
+
+      - name: Cache Pub packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ${{ github.workspace }}/.dart_tool
+          key: pub-apk-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: |
+            pub-apk-${{ runner.os }}-
+
+      - name: Restore pub packages
+        run: flutter pub get
+
+      - name: Generate Hive adapters
+        run: dart run build_runner build --delete-conflicting-outputs
+
+      - name: Decode signing keystore
+        env:
+          # The keystore is base64-encoded and stored as a GitHub Secret.
+          # On a fork without secrets configured, this step no-ops and
+          # the build produces a debug-signed APK.
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "::warning::SIGNING_KEYSTORE_BASE64 secret not set — building debug-signed APK."
+            mkdir -p android/app/keystore
+            exit 0
+          fi
+          mkdir -p android/app/keystore
+          echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > android/app/keystore/release.keystore
+          echo "Keystore decoded: $(stat -c%s android/app/keystore/release.keystore) bytes"
+
+      - name: Create key.properties
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::warning::Signing secrets not set — using debug signing."
+            exit 0
+          fi
+          cat > android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=keystore/release.keystore
+          EOF
+          echo "android/key.properties created"
+
+      - name: Build release APK (split per ABI)
+        run: flutter build apk --release --flavor ${{ inputs.flavor }} --split-per-abi --no-tree-shake-icons
+
+      - name: List built APKs
+        run: |
+          echo "## APK build artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| ABI | File | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|------|------|" >> $GITHUB_STEP_SUMMARY
+          for f in build/app/outputs/flutter-apk/*.apk; do
+            if [ -f "$f" ]; then
+              size=$(du -h "$f" | cut -f1)
+              name=$(basename "$f")
+              abi=$(echo "$name" | sed -n 's/.*-\(arm64-v8a\|armeabi-v7a\|x86_64\).*/\1/p')
+              echo "| ${abi:-default} | $name | $size |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          ls -lh build/app/outputs/flutter-apk/
+
+      - name: Compress APKs into single artifact
+        run: |
+          mkdir -p artifacts
+          cp build/app/outputs/flutter-apk/*.apk artifacts/
+          cd artifacts
+          zip -r omniforge-ai-apks-${{ inputs.flavor }}-${{ github.sha }}.zip *.apk
+          cd ..
+          ls -lh artifacts/
+
+      - name: Upload arm64-v8a APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-arm64-v8a-${{ inputs.flavor }}
+          path: build/app/outputs/flutter-apk/*arm64-v8a*.apk
+          retention-days: 30
+          compression-level: 0  # APKs are already compressed
+
+      - name: Upload armeabi-v7a APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-armeabi-v7a-${{ inputs.flavor }}
+          path: build/app/outputs/flutter-apk/*armeabi-v7a*.apk
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload x86_64 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-x86_64-${{ inputs.flavor }}
+          path: build/app/outputs/flutter-apk/*x86_64*.apk
+          retention-days: 30
+          compression-level: 0
+
+      - name: Upload combined ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-all-${{ inputs.flavor }}
+          path: artifacts/*.zip
+          retention-days: 30
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd build/app/outputs/flutter-apk/
+          sha256sum *.apk > checksums-sha256.txt
+          cat checksums-sha256.txt
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-checksums-${{ inputs.flavor }}
+          path: build/app/outputs/flutter-apk/checksums-sha256.txt
+          retention-days: 30
+
+

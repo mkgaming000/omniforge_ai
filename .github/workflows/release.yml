@@ -1,0 +1,192 @@
+# OmniForge AI — Release pipeline
+# Triggers on git tags matching v*.*.* (e.g. v1.0.0, v2.3.1, v1.0.0-rc.1).
+# Builds APK + AAB, generates release notes + changelog, publishes a
+# GitHub Release with all artifacts attached.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'
+
+permissions:
+  contents: write  # required to create releases + upload assets
+
+env:
+  FLUTTER_VERSION: '3.24.5'
+  JAVA_VERSION: '17'
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Job 1: Validate the tag + generate release notes
+  # -------------------------------------------------------------------------
+  prepare-release:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      release_notes: ${{ steps.notes.outputs.release_notes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for changelog generation
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # Strip leading 'v'
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          # Prerelease if tag contains a hyphen (e.g. v1.0.0-rc.1)
+          if [[ "$TAG" == *-* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+          echo "Releasing version $VERSION (tag $TAG, prerelease=$([ "${TAG#v}" != "${TAG}" ] && echo true || echo false))"
+
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          # Find the previous tag (if any) to scope the changelog.
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+          fi
+          echo "Changelog range: $RANGE"
+          # Generate a categorized commit list.
+          {
+            echo "## Changelog"
+            echo ""
+            echo "### Commits since $PREV_TAG"
+            echo ""
+            git log $RANGE --pretty=format:'- %s (%h)' --no-merges
+          } > CHANGELOG.md
+          cat CHANGELOG.md
+
+      - name: Build release notes
+        id: notes
+        run: |
+          {
+            echo "release_notes<<EOF"
+            echo "# OmniForge AI v${{ steps.version.outputs.version }}"
+            echo ""
+            cat CHANGELOG.md
+            echo ""
+            echo "---"
+            echo ""
+            echo "## Installation"
+            echo ""
+            echo "### Android (APK)"
+            echo "1. Download the APK matching your device architecture:"
+            echo "   - **arm64-v8a** — modern 64-bit devices (most phones since 2017)"
+            echo "   - **armeabi-v7a** — older 32-bit devices"
+            echo "   - **x86_64** — emulators + Chromebook"
+            echo "2. Allow installs from unknown sources in Settings."
+            echo "3. Tap the downloaded APK to install."
+            echo ""
+            echo "### Play Store (AAB)"
+            echo "The AAB artifact is the production bundle for Play Store submission."
+            echo ""
+            echo "## Verification"
+            echo ""
+            echo "SHA-256 checksums for all artifacts are attached as \`checksums-sha256.txt\`."
+            echo "Verify integrity with:"
+            echo '```bash'
+            echo "sha256sum -c checksums-sha256.txt"
+            echo '```'
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Upload changelog
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: CHANGELOG.md
+          retention-days: 90
+
+  # -------------------------------------------------------------------------
+  # Job 2: Build APK (reuses build-apk workflow)
+  # -------------------------------------------------------------------------
+  build-apk:
+    name: Build APK
+    needs: prepare-release
+    uses: ./.github/workflows/build-apk.yml
+    with:
+      flavor: production
+      version_tag: ${{ needs.prepare-release.outputs.tag }}
+    secrets: inherit
+
+  # -------------------------------------------------------------------------
+  # Job 3: Build AAB (reuses build-aab workflow)
+  # -------------------------------------------------------------------------
+  build-aab:
+    name: Build AAB
+    needs: prepare-release
+    uses: ./.github/workflows/build-aab.yml
+    with:
+      flavor: production
+      version_tag: ${{ needs.prepare-release.outputs.tag }}
+    secrets: inherit
+
+  # -------------------------------------------------------------------------
+  # Job 4: Publish the GitHub Release with all artifacts
+  # -------------------------------------------------------------------------
+  publish-release:
+    name: Publish Release
+    needs: [prepare-release, build-apk, build-aab]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts/
+
+      - name: List downloaded artifacts
+        run: |
+          find release-artifacts/ -type f | sort
+          ls -lhR release-artifacts/
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p assets
+          # Move all APKs to assets/ with clean names.
+          find release-artifacts/ -name "*.apk" -exec cp {} assets/ \;
+          # Move AAB.
+          find release-artifacts/ -name "*.aab" -exec cp {} assets/omniforge-ai-${{ needs.prepare-release.outputs.version }}.aab \;
+          # Move checksums.
+          find release-artifacts/ -name "checksums*.txt" -exec cp {} assets/ \;
+          # Move changelog.
+          find release-artifacts/ -name "CHANGELOG.md" -exec cp {} assets/ \;
+          ls -lh assets/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          name: OmniForge AI ${{ needs.prepare-release.outputs.tag }}
+          body: ${{ needs.prepare-release.outputs.release_notes }}
+          draft: false
+          prerelease: ${{ needs.prepare-release.outputs.is_prerelease }}
+          generate_release_notes: false
+          files: |
+            assets/*.apk
+            assets/*.aab
+            assets/checksums*.txt
+            assets/CHANGELOG.md
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+

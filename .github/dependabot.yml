@@ -1,0 +1,77 @@
+# OmniForge AI — Dependabot configuration
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+version: 2
+
+updates:
+  # Flutter / Dart dependencies (pubspec.yaml)
+  - package-ecosystem: 'pub'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+      time: '03:00'
+      timezone: 'UTC'
+    open-pull-requests-limit: 10
+    target-branch: 'develop'
+    labels:
+      - 'dependencies'
+      - 'pub'
+      - 'automated'
+    commit-message:
+      prefix: 'chore(deps)'
+      prefix-development: 'chore(deps-dev)'
+      include: 'scope'
+    groups:
+      # Group all minor + patch updates into a single PR.
+      flutter-packages:
+        update-types:
+          - 'minor'
+          - 'patch'
+        patterns:
+          - '*'
+    # Major version bumps get individual PRs for careful review.
+    allow:
+      - dependency-type: 'direct'
+      - dependency-type: 'indirect'
+    ignore:
+      # Pin Flutter SDK to a known-good major version (manually upgrade).
+      - dependency-name: 'flutter'
+        update-types: ['version-update:semver-major']
+
+  # GitHub Actions dependencies
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+      time: '03:30'
+      timezone: 'UTC'
+    open-pull-requests-limit: 5
+    target-branch: 'develop'
+    labels:
+      - 'dependencies'
+      - 'github-actions'
+      - 'automated'
+    commit-message:
+      prefix: 'ci(actions)'
+      include: 'scope'
+    groups:
+      actions:
+        patterns:
+          - '*'
+
+  # Gradle dependencies (Android)
+  - package-ecosystem: 'gradle'
+    directory: '/android'
+    schedule:
+      interval: 'monthly'
+    open-pull-requests-limit: 5
+    target-branch: 'develop'
+    labels:
+      - 'dependencies'
+      - 'gradle'
+      - 'android'
+      - 'automated'
+    commit-message:
+      prefix: 'chore(android-deps)'
+      include: 'scope'

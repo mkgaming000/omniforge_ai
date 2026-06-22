@@ -1,0 +1,46 @@
+# OmniForge AI — Code Owners
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Every PR that touches files in these paths will automatically request
+# review from the corresponding team or user.
+
+# Default owner for the entire repo
+*                           @omniforge-ai/architects
+
+# Flutter app source
+/lib/                       @omniforge-ai/architects @omniforge-ai/flutter-team
+/lib/core/                  @omniforge-ai/architects
+/lib/data/                  @omniforge-ai/architects
+/lib/domain/                @omniforge-ai/architects
+/lib/presentation/          @omniforge-ai/flutter-team
+/lib/features/              @omniforge-ai/flutter-team
+/lib/features/orchestrator/ @omniforge-ai/ai-team @omniforge-ai/architects
+/lib/injection/             @omniforge-ai/architects
+
+# AI provider integrations
+/lib/data/services/ai/      @omniforge-ai/ai-team
+/lib/data/services/rag/     @omniforge-ai/ai-team
+/lib/data/services/vector_store/ @omniforge-ai/ai-team
+
+# Security-sensitive paths
+/lib/core/security/         @omniforge-ai/security-team
+/lib/data/services/audit/   @omniforge-ai/security-team
+/lib/data/services/cloud_sync/ @omniforge-ai/security-team
+
+# Android native
+/android/                   @omniforge-ai/mobile-team
+/android/app/build.gradle.kts @omniforge-ai/mobile-team @omniforge-ai/devops-team
+/android/app/src/main/AndroidManifest.xml @omniforge-ai/security-team @omniforge-ai/mobile-team
+
+# CI/CD + workflows
+/.github/                   @omniforge-ai/devops-team
+/.github/workflows/         @omniforge-ai/devops-team
+/pubspec.yaml               @omniforge-ai/architects @omniforge-ai/devops-team
+/pubspec.lock               @omniforge-ai/devops-team
+
+# Documentation
+/README.md                  @omniforge-ai/architects @omniforge-ai/devops-team
+/docs/                      @omniforge-ai/architects
+
+# Tests
+/test/                      @omniforge-ai/qa-team

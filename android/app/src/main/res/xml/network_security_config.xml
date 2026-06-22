@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <!-- Allow cleartext for local AI providers (Ollama, LM Studio) reachable
+         via the Android emulator loopback alias or localhost. NOTE: Android's
+         network-security-config <domain> element only accepts exact hostnames
+         (optionally with includeSubdomains) — it does NOT support CIDR ranges.
+         If you run a local model server on a real LAN IP (e.g. 192.168.1.50),
+         add that specific host below; a /16 block here is invalid and throws
+         a parser exception at runtime, breaking all app networking. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>
