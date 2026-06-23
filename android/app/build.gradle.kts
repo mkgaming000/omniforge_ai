@@ -52,7 +52,7 @@ android {
     namespace = "com.omniforge.ai"
     // flutter_secure_storage 10.x and flutter_tts 4.x both require compileSdk 36.
     // (flutter_plugin_android_lifecycle requires 35.)
-    // Android SDK versions are backward-compatible so minSdk 23 is unaffected.
+    // minSdk raised to 24 to satisfy flutter_tts 4.x manifest requirement.
     compileSdk = 36
     ndkVersion = "26.1.10909125"
 
@@ -72,7 +72,11 @@ android {
 
     defaultConfig {
         applicationId = "com.omniforge.ai"
-        minSdk = 23
+        // flutter_tts 4.x requires minSdk 24 (declared in its AndroidManifest.xml).
+        // Raised from 23 → 24 to fix: "minSdkVersion 23 cannot be smaller than
+        // version 24 declared in library [:flutter_tts]" manifest merger error.
+        // All other plugins require minSdk ≤ 23, so 24 is fully compatible.
+        minSdk = 24
         targetSdk = 36
         versionCode = flutterVersionCode.toInt()
         versionName = flutterVersionName
