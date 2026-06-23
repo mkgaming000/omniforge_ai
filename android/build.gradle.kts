@@ -28,25 +28,25 @@ subprojects {
 // now a hard error, not a warning). The replacement is `compilerOptions`,
 // which uses Property<KotlinVersion> (an enum) instead of plain strings.
 //
-// This block reads each KotlinCompile task's languageVersion / apiVersion via
-// the new compilerOptions DSL and bumps any value below 1.8 up to 1.9.
-// Tasks already targeting ≥1.8 are left untouched.
+// NOTE: Do NOT wrap this in afterEvaluate { }.  Gradle 8.7 throws
+// "Cannot run afterEvaluate when the project is already evaluated" because
+// `evaluationDependsOn(":app")` above forces :app to finish first.
+// `configureEach` is inherently lazy — it fires at task-creation time, not
+// after project evaluation — so no afterEvaluate wrapper is needed.
 subprojects {
-    afterEvaluate {
-        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-            compilerOptions {
-                val minOrd = org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_1_8.ordinal
-                val target  = org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_1_9
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        compilerOptions {
+            val minOrd = org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_1_8.ordinal
+            val target  = org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_1_9
 
-                val lv = languageVersion.orNull
-                if (lv != null && lv.ordinal < minOrd) {
-                    languageVersion.set(target)
-                }
+            val lv = languageVersion.orNull
+            if (lv != null && lv.ordinal < minOrd) {
+                languageVersion.set(target)
+            }
 
-                val av = apiVersion.orNull
-                if (av != null && av.ordinal < minOrd) {
-                    apiVersion.set(target)
-                }
+            val av = apiVersion.orNull
+            if (av != null && av.ordinal < minOrd) {
+                apiVersion.set(target)
             }
         }
     }
